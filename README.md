@@ -1,16 +1,17 @@
 ESP8266 Busylight
 =================
 
-A simple ESP8266 Busylight.
+A simple ESP8266 Busylight, which supports Webserver, MQTT, and Telegram frontends.
 
 Configuration
 -------------
 
-Edit `config.h`, and adjust the following values as needed:
+Copy `config_example.h` in `includes` to `config.h`, and adjust the following values as needed:
 
 * `LED_TYPE` - 0/1 for Anode/Cathode
 * LED Pin numbers
 * SSID, and Key
+* Enable features and configure values as needed.
 
 Usage
 -----
