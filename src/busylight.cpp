@@ -1,49 +1,36 @@
 // Busylight - A web accessible busylight
 // (c) 2021 Andrew Williams <andy@tensixtyone.com>
-// This code is licensed under MIT license (see LICENSE.txt for details)
+// This code is licensed under MIT license (see LICENSE for details)
 
 #include <config.h>
 #include <Arduino.h>
 #include <ESP8266WiFi.h>
-#ifdef WEBSERVER
-#include <ESP8266WebServer.h>
-#endif
-#ifdef MQTT
-#include <PubSubClient.h>
-#endif
-
-#define PWM_MAX_VALUE 1024
-
-struct status
-{
-  char name[20];
-  int r;
-  int g;
-  int b;
-  int blink;
-};
-
-struct status statuses[] = {
-  {"busy", 255, 0, 0, 0},
-  {"available", 0, 255, 0, 0},
-  {"away", 150, 255, 0, 0},
-  {"ooo", 255, 0, 255, 0},
-  {"offline", 0, 0, 0, 0},
-  {"blue", 0, 0, 255, 10}
-};
-#define STATUSES_COUNT 6
-
-//#####################################
+#include <statuses.h>
 
 WiFiClient wifi;
-#ifdef WEBSERVER
-ESP8266WebServer server;
-#endif
-#ifdef MQTT
-PubSubClient pubsub(wifi);
-#endif
+WiFiClientSecure wifi_secure;
 char current_state[20];
 
+#ifdef ENABLE_WEBSERVER
+#include <ESP8266WebServer.h>
+ESP8266WebServer server;
+#endif
+
+#ifdef ENABLE_MQTT
+#include <PubSubClient.h>
+PubSubClient pubsub(wifi);
+#endif
+
+#ifdef ENABLE_TELEGRAM
+#include <UniversalTelegramBot.h>
+
+X509List cert(TELEGRAM_CERTIFICATE_ROOT);
+UniversalTelegramBot bot(TELEGRAM_BOT_TOKEN, wifi_secure);
+const unsigned long BOT_MTBS = 1000;
+unsigned long telegram_bot_last_time;
+#endif
+
+// Calculates the PWM value for the RGB LED, taking into account Anode/Cathode
 int RGB_calc(int value) {
   #if LED_TYPE == 0
   return PWM_MAX_VALUE - ((value / 255.f) * PWM_MAX_VALUE);
@@ -52,6 +39,7 @@ int RGB_calc(int value) {
   #endif
 }
 
+// Writes out the RBG colours to the pins
 void RGB_color(int r, int g, int b)
 {
   analogWrite(RED_LED_PIN, RGB_calc(r));
@@ -59,6 +47,7 @@ void RGB_color(int r, int g, int b)
   analogWrite(BLUE_LED_PIN, RGB_calc(b));
 }
 
+// Switches status based on a status struct provided
 void Switch_Status(struct status status) {
   if (status.blink > 0) {
     bool bstate = false;
@@ -77,6 +66,7 @@ void Switch_Status(struct status status) {
   strcpy(current_state, status.name);
 }
 
+// Switches status based on a name of a status struct
 bool Switch_Status(String name) {
   Serial.println("Switching to " + name);
   for(int j=0; j<STATUSES_COUNT; j++) {
@@ -88,7 +78,7 @@ bool Switch_Status(String name) {
   return false;
 }
 
-#ifdef WEBSERVER
+#ifdef ENABLE_WEBSERVER
 void IndexPage() {
   char buffer[1024] = "<html><head><title>Busylight</title></head><body>";
   for(int j=0; j<STATUSES_COUNT; j++) {
@@ -111,8 +101,36 @@ void StatusLookup() {
 }
 #endif
 
-#ifdef MQTT
+#ifdef ENABLE_MQTT
 void Pubsub_Callback(char* topic, byte* payload, unsigned int length) {
+}
+#endif
+
+#ifdef ENABLE_TELEGRAM
+void Telegram_Message(int msg_count) {
+
+  // Iterate through the waiting messages
+  for (int i = 0; i < msg_count; i++) {
+    String text = bot.messages[i].text;
+    String chat_id = bot.messages[i].chat_id;
+
+    if (text == "/start") {
+      String buffer = "Hi, i'm Busylight, you can control me with one of the following commands\n\n";
+      for(int j=0; j<STATUSES_COUNT; j++) {
+        buffer += "/";
+        buffer += statuses[j].name;
+        buffer += "\n";
+      }
+      bot.sendMessage(chat_id, buffer);
+    } else if (!text.charAt(0) == '/') {
+      bot.sendMessage(chat_id, "Hi, i'm Busylight, to see my commands try /start");
+    } else {
+      bool res = Switch_Status(text.substring(1));
+      if (!res) {
+        bot.sendMessage(chat_id, "Sorry, " + text.substring(1) + " is a invalid status");
+      }
+    }
+  }
 }
 #endif
 
@@ -142,33 +160,55 @@ void setup()
   digitalWrite(LED_BUILTIN, LOW);
   Switch_Status("offline");
 
-#ifdef MQTT
+#ifdef ENABLE_MQTT
   pubsub.setServer(MQTT_SERVER, MQTT_PORT);
   pubsub.setCallback(Pubsub_Callback);
 #endif
-#ifdef WEBSERVER
+
+#ifdef ENABLE_WEBSERVER
   server.on("/",IndexPage);
   server.on("/health", [](){server.send(200,"text/plain","OK");});
   server.on("/state", [](){server.send(200,"text/plain", current_state);});
   server.onNotFound(StatusLookup);
   server.begin();
 #endif
+
+#ifdef ENABLE_TELEGRAM
+// Add api.telegram.org root cert
+wifi_secure.setTrustAnchors(&cert);
+wifi_secure.setInsecure();
+#endif
 }
 
 void loop()
 {
-#ifdef MQTT
-  Serial.print("Connecting to MQTT ");
-  while (!pubsub.connected()) {
-    Serial.print(".");
-    if (pubsub.connect("Client")) {
-      Serial.println(" done.");
+#ifdef ENABLE_MQTT
+  if (!pubsub.connected()) {
+    Serial.print("Connecting to MQTT ");
+    while (!pubsub.connected()) {
+      Serial.print(".");
+      if (pubsub.connect("Client")) {
+        Serial.println(" done.");
+      }
+      delay(500);
     }
-    delay(500);
   }
   pubsub.loop();
 #endif
-#ifdef WEBSERVER
+
+#ifdef ENABLE_TELEGRAM
+  if (millis() - telegram_bot_last_time > BOT_MTBS) {
+    int msg_count = bot.getUpdates(bot.last_message_received + 1);
+    while (msg_count) {
+      Serial.println("Recevied Telegram Message");
+      Telegram_Message(msg_count);
+      msg_count = bot.getUpdates(bot.last_message_received + 1);
+    }
+    telegram_bot_last_time = millis();
+  }
+#endif
+
+#ifdef ENABLE_WEBSERVER
   server.handleClient();
 #endif
 }
