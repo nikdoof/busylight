@@ -12,7 +12,9 @@ WiFiClientSecure wifi_secure;
 char current_state[20];
 
 #ifdef ENABLE_WEBSERVER
+#include <LittleFS.h>
 #include <ESP8266WebServer.h>
+#include "ESPTemplateProcessor.h"
 ESP8266WebServer server;
 #endif
 
@@ -71,7 +73,7 @@ bool Switch_Status(String name) {
   Serial.println("Switching to " + name);
   for(int j=0; j<STATUSES_COUNT; j++) {
     if (String(statuses[j].name) == name) {
-      Switch_Status(statuses[j]); 
+      Switch_Status(statuses[j]);
       return true;
     }
   }
@@ -79,22 +81,29 @@ bool Switch_Status(String name) {
 }
 
 #ifdef ENABLE_WEBSERVER
-void IndexPage() {
-  char buffer[1024] = "<html><head><title>Busylight</title></head><body>";
-  for(int j=0; j<STATUSES_COUNT; j++) {
-    strcat(buffer, "<a href=/");
-    strcat(buffer, statuses[j].name);
-    strcat(buffer, ">");
-    strcat(buffer, statuses[j].name); 
-    strcat(buffer, "</a><br/>");
+String ProcessIndexPage(const String& var) {
+  Serial.println(current_state);
+  if (var == "LIST") {
+    String buffer;
+    for(int j=0; j<STATUSES_COUNT; j++) {
+      buffer += "<a href='/";
+      buffer += statuses[j].name;
+      buffer += "'";
+      if (strcmp(statuses[j].name, current_state) == 0) {
+        buffer += " class='active'";
+      }
+      buffer += ">";
+      buffer += statuses[j].name;
+      buffer += "</a><br/>";
+    }
+    return buffer;
   }
-  strcat(buffer, "</body></html>");
-  server.send(200, "text/html", buffer);
 }
 
 void StatusLookup() {
-  if (Switch_Status(server.uri().substring(1))) { 
-    server.send(204, "text/plain", "OK");
+  if (Switch_Status(server.uri().substring(1))) {
+    server.sendHeader("Location", String("/"), true);
+    server.send ( 302, "text/plain", ""); 
     return;
   }
   server.send(404, "text/plain", "Missing");
@@ -139,13 +148,15 @@ void setup()
   Serial.begin(9600);
   Serial.println("");
   Serial.println("---");
-  
+
+  // Define the output pins
   pinMode(RED_LED_PIN, OUTPUT);
   pinMode(GREEN_LED_PIN, OUTPUT);
   pinMode(BLUE_LED_PIN, OUTPUT);
 
   Serial.println("Config - Pins: (" + String(RED_LED_PIN) + "," + String(GREEN_LED_PIN) + "," + String(BLUE_LED_PIN) + "), PWM: " + String(PWM_MAX_VALUE));
-  
+
+  // Start Wifi
   WiFi.begin(WIFI_SSID, WIFI_PASS);
   Serial.print("Connecting to " + String(WIFI_SSID));
   while(WiFi.status()!= WL_CONNECTED)
@@ -157,6 +168,7 @@ void setup()
   Serial.print("IP Address: ");
   Serial.println(WiFi.localIP());
 
+  // Disable inbuilt LED, and go 'offline'
   digitalWrite(LED_BUILTIN, LOW);
   Switch_Status("offline");
 
@@ -166,9 +178,19 @@ void setup()
 #endif
 
 #ifdef ENABLE_WEBSERVER
-  server.on("/",IndexPage);
-  server.on("/health", [](){server.send(200,"text/plain","OK");});
-  server.on("/state", [](){server.send(200,"text/plain", current_state);});
+  if(!LittleFS.begin()){
+    Serial.println("An Error has occurred while mounting LittleFS");
+    return;
+  }
+  server.on("/", HTTP_GET, [](){
+    ESPTemplateProcessor(server).send(String("/index.html"), ProcessIndexPage);
+  });
+  server.on("/health", HTTP_GET, [](){
+    server.send(200,"text/plain","OK");
+  });
+  server.on("/state", HTTP_GET, [](){
+    server.send(200,"text/plain", current_state);
+  });
   server.onNotFound(StatusLookup);
   server.begin();
 #endif
