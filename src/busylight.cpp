@@ -42,7 +42,7 @@ int RGB_calc(int value) {
 }
 
 // Writes out the RBG colours to the pins
-void RGB_color(int r, int g, int b)
+void setRGBColor(int r, int g, int b)
 {
   analogWrite(RED_LED_PIN, RGB_calc(r));
   analogWrite(GREEN_LED_PIN, RGB_calc(g));
@@ -50,30 +50,30 @@ void RGB_color(int r, int g, int b)
 }
 
 // Switches status based on a status struct provided
-void Switch_Status(struct status status) {
+void switchStatus(struct status status) {
   if (status.blink > 0) {
     bool bstate = false;
     for(int j=0; j<status.blink; j++) {
       if (bstate) {
-        RGB_color(status.r, status.g, status.b);
+        setRGBColor(status.r, status.g, status.b);
       } else {
-        RGB_color(0, 0, 0);
+        setRGBColor(0, 0, 0);
       }
       bstate = !bstate;
       delay(500);
     }
   } else {
-    RGB_color(status.r, status.g, status.b);
+    setRGBColor(status.r, status.g, status.b);
   }
   strcpy(current_state, status.name);
 }
 
 // Switches status based on a name of a status struct
-bool Switch_Status(String name) {
+bool switchStatus(String name) {
   Serial.println("Switching to " + name);
   for(int j=0; j<STATUSES_COUNT; j++) {
     if (String(statuses[j].name) == name) {
-      Switch_Status(statuses[j]);
+      switchStatus(statuses[j]);
       return true;
     }
   }
@@ -81,7 +81,7 @@ bool Switch_Status(String name) {
 }
 
 #ifdef ENABLE_WEBSERVER
-String ProcessIndexPage(const String& var) {
+String processIndexPage(const String& var) {
   Serial.println(current_state);
   if (var == "LIST") {
     String buffer;
@@ -100,8 +100,8 @@ String ProcessIndexPage(const String& var) {
   }
 }
 
-void StatusLookup() {
-  if (Switch_Status(server.uri().substring(1))) {
+void statusLookup() {
+  if (switchStatus(server.uri().substring(1))) {
     server.sendHeader("Location", String("/"), true);
     server.send ( 302, "text/plain", ""); 
     return;
@@ -111,13 +111,12 @@ void StatusLookup() {
 #endif
 
 #ifdef ENABLE_MQTT
-void Pubsub_Callback(char* topic, byte* payload, unsigned int length) {
+void pubSubCallback(char* topic, byte* payload, unsigned int length) {
 }
 #endif
 
 #ifdef ENABLE_TELEGRAM
-void Telegram_Message(int msg_count) {
-
+void telegramMessage(int msg_count) {
   // Iterate through the waiting messages
   for (int i = 0; i < msg_count; i++) {
     String text = bot.messages[i].text;
@@ -134,7 +133,7 @@ void Telegram_Message(int msg_count) {
     } else if (!text.charAt(0) == '/') {
       bot.sendMessage(chat_id, "Hi, i'm Busylight, to see my commands try /start");
     } else {
-      bool res = Switch_Status(text.substring(1));
+      bool res = switchStatus(text.substring(1));
       if (!res) {
         bot.sendMessage(chat_id, "Sorry, " + text.substring(1) + " is a invalid status");
       }
@@ -170,11 +169,11 @@ void setup()
 
   // Disable inbuilt LED, and go 'offline'
   digitalWrite(LED_BUILTIN, LOW);
-  Switch_Status("offline");
+  switchStatus("offline");
 
 #ifdef ENABLE_MQTT
   pubsub.setServer(MQTT_SERVER, MQTT_PORT);
-  pubsub.setCallback(Pubsub_Callback);
+  pubsub.setCallback(pubSubCallback);
 #endif
 
 #ifdef ENABLE_WEBSERVER
@@ -183,7 +182,7 @@ void setup()
     return;
   }
   server.on("/", HTTP_GET, [](){
-    ESPTemplateProcessor(server).send(String("/index.html"), ProcessIndexPage);
+    ESPTemplateProcessor(server).send(String("/index.html"), processIndexPage);
   });
   server.on("/health", HTTP_GET, [](){
     server.send(200,"text/plain","OK");
@@ -191,7 +190,7 @@ void setup()
   server.on("/state", HTTP_GET, [](){
     server.send(200,"text/plain", current_state);
   });
-  server.onNotFound(StatusLookup);
+  server.onNotFound(statusLookup);
   server.begin();
 #endif
 
@@ -223,7 +222,7 @@ void loop()
     int msg_count = bot.getUpdates(bot.last_message_received + 1);
     while (msg_count) {
       Serial.println("Recevied Telegram Message");
-      Telegram_Message(msg_count);
+      telegramMessage(msg_count);
       msg_count = bot.getUpdates(bot.last_message_received + 1);
     }
     telegram_bot_last_time = millis();

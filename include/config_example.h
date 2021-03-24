@@ -16,7 +16,7 @@
 #define WIFI_PASS "s3cur3"
 
 // Enables the webserver
-#define WEBSERVER
+#define ENABLE_WEBSERVER
 
 // Enable MQTT connection (not complete)
 //#define ENABLE_MQTT
